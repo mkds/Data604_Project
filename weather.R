@@ -237,7 +237,7 @@ precip2_gbt4 <- xgboost(data = data.matrix(daily2[,-5]),
                        nthread = 5, objective = "reg:linear")
 
 pred_daily2=daily2
-for (i in nrow(pred_daily2):2){
+for (i in nrow(daily2):2){
   pred_daily2$max_temp_f[i]=get_nxt_chain(pred_daily2$max_temp_f[i-1],
                                          max_temp_nxt_m[[month[i]]])
   
@@ -270,9 +270,170 @@ table(bin2>.5,daily$precip_in>0.05)
 
 
 
+##### Three day forecast
+pred_daily3=daily2
+for (i in nrow(pred_daily3):4){
+  max_temp=daily2$max_temp_f[i-3]
+  min_temp=daily2$min_temp_f[i-3]
+  max_dewpoint=daily2$max_dewpoint_f[i-3]
+  min_dewpoint=daily2$min_dewpoint_f[i-3]
+  max_rh=daily2$max_rh[i-3]
+  min_rh=daily2$min_rh[i-3]
+  avg_rh=daily2$avg_rh[i-3]
+  for (j in 3:1){
+    max_temp=get_nxt_chain(max_temp, max_temp_nxt)
+    
+    min_temp=get_nxt_chain(min_temp, min_temp_nxt)
+    max_dewpoint=get_nxt_chain(max_dewpoint, max_dew_nxt)
+    min_dewpoint=get_nxt_chain(min_dewpoint, min_dew_nxt)
+    min_rh=get_nxt_chain(min_rh, min_rh_nxt)
+    max_rh=get_nxt_chain(max_rh, max_rh_nxt)
+    avg_rh=get_nxt_chain(avg_rh, avg_rh_nxt)
+  }
+    
+  
+  pred_daily3$max_temp_f[i]=max_temp
+  pred_daily3$min_temp_f[i]=min_temp
+  pred_daily3$max_dewpoint_f[i]=max_dewpoint
+  pred_daily3$min_dewpoint_f[i]=min_dewpoint
+  pred_daily3$min_rh[i]=min_rh
+  pred_daily3$max_rh[i]=max_rh
+  pred_daily3$avg_rh[i]=avg_rh
+
+}
+
+in3=predict(precip2_gbt4,data.matrix(pred_daily3[,-5]))
+bin3=predict(b2,data.matrix(pred_daily3[,-5]))
+sqrt(mean((in3-daily$precip_in)^2))
+
+table(bin3>.5,daily$precip_in>0.05)
 
 
 
+#### 5th Day Forecast
+
+pred_daily5=daily2
+for (i in nrow(pred_daily3):6){
+  max_temp=daily2$max_temp_f[i-5]
+  min_temp=daily2$min_temp_f[i-5]
+  max_dewpoint=daily2$max_dewpoint_f[i-5]
+  min_dewpoint=daily2$min_dewpoint_f[i-5]
+  max_rh=daily2$max_rh[i-5]
+  min_rh=daily2$min_rh[i-5]
+  avg_rh=daily2$avg_rh[i-5]
+  for (j in 5:1){
+    max_temp=get_nxt_chain(max_temp, max_temp_nxt)
+    
+    min_temp=get_nxt_chain(min_temp, min_temp_nxt)
+    max_dewpoint=get_nxt_chain(max_dewpoint, max_dew_nxt)
+    min_dewpoint=get_nxt_chain(min_dewpoint, min_dew_nxt)
+    min_rh=get_nxt_chain(min_rh, min_rh_nxt)
+    max_rh=get_nxt_chain(max_rh, max_rh_nxt)
+    avg_rh=get_nxt_chain(avg_rh, avg_rh_nxt)
+  }
+    
+  
+  pred_daily5$max_temp_f[i]=max_temp
+  pred_daily5$min_temp_f[i]=min_temp
+  pred_daily5$max_dewpoint_f[i]=max_dewpoint
+  pred_daily5$min_dewpoint_f[i]=min_dewpoint
+  pred_daily5$min_rh[i]=min_rh
+  pred_daily5$max_rh[i]=max_rh
+  pred_daily5$avg_rh[i]=avg_rh
+
+}
+
+in5=predict(precip2_gbt4,data.matrix(pred_daily5[,-5]))
+bin5=predict(b2,data.matrix(pred_daily5[,-5]))
+sqrt(mean((in5-daily$precip_in)^2))
+
+table(bin5>.5,daily$precip_in>0.05)
 
 
+###By Seasons
+##### Check if using transitions by month helps #####
+min_temp_nxt_s=NULL
+max_temp_nxt_s=NULL
+max_dew_nxt_s=NULL
+min_dew_nxt_s=NULL
+avg_rh_nxt_s=NULL
+min_rh_nxt_s=NULL
+max_rh_nxt_s=NULL
+season=(as.numeric(as.character(daily$month)) %/% 3 %%4) + 1
+for(i in 1:4){
+  max_temp_nxt_s[[i]]=get_trans_mat(daily$max_temp_f[season==i],40)
+  min_temp_nxt_s[[i]]=get_trans_mat(daily$min_temp_f[season==i],40)
+  max_dew_nxt_s[[i]]=get_trans_mat(daily$max_dewpoint_f[season==i],40)
+  min_dew_nxt_s[[i]]=get_trans_mat(daily$min_dewpoint_f[season==i],40)
+  avg_rh_nxt_s[[i]]=get_trans_mat(daily$avg_rh[season==i],40)
+  min_rh_nxt_s[[i]]=get_trans_mat(daily$min_rh[season==i],40)
+  max_rh_nxt_s[[i]]=get_trans_mat(daily$max_rh[season==i],40)
+
+
+}
+
+
+
+daily2s=daily2
+for (i in 1:nrow(daily2s)){
+  daily2s$max_temp_f[i]=get_band(daily2s$max_temp_f[i],
+                                max_temp_nxt_m[[season[i]]])
+  
+  daily2s$min_temp_f[i]=get_band(daily2s$min_temp_f[i],
+                                min_temp_nxt_m[[season[i]]])
+  daily2s$max_dewpoint_f[i]=get_band(daily2s$max_dewpoint_f[i],
+                                    max_dew_nxt_m[[season[i]]])
+  daily2s$min_dewpoint_f[i]=get_band(daily2s$min_dewpoint_f[i],
+                                    min_dew_nxt_m[[season[i]]])
+  
+  daily2s$min_rh[i]=get_band(daily2s$min_rh[i],
+                            min_rh_nxt_m[[season[i]]])
+  
+  daily2s$max_rh[i]=get_band(daily2s$max_rh[i],
+                            max_rh_nxt_m[[season[i]]])
+  daily2s$avg_rh[i]=get_band(daily2s$avg_rh[i],
+                            avg_rh_nxt_m[[season[i]]])
+  
+  
+}
+
+b2s=xgboost(data = data.matrix(daily2s[,-5]),
+          label = data.matrix(daily2s$precip_in>0.05),
+          max.depth = 1, eta = 1, nround = 50,
+          nthread = 5, objective = "binary:logistic")
+
+
+
+precip2_gbt4s <- xgboost(data = data.matrix(daily2s[,-5]),
+                       label = data.matrix(daily2s$precip_in), 
+                       max.depth = 1, eta = 1, nround = 50,
+                       nthread = 5, objective = "reg:linear")
+
+pred_daily2s=daily2
+for (i in nrow(daily2):2){
+  pred_daily2s$max_temp_f[i]=get_nxt_chain(pred_daily2s$max_temp_f[i-1],
+                                         max_temp_nxt_m[[season[i]]])
+  
+  pred_daily2s$min_temp_f[i]=get_nxt_chain(pred_daily2s$min_temp_f[i-1],
+                                         min_temp_nxt_m[[season[i]]])
+  pred_daily2s$max_dewpoint_f[i]=get_nxt_chain(pred_daily2s$max_dewpoint_f[i-1],
+                                             max_dew_nxt_m[[season[i]]])
+  pred_daily2s$min_dewpoint_f[i]=get_nxt_chain(pred_daily2s$min_dewpoint_f[i-1],
+                                             min_dew_nxt_m[[season[i]]])
+  
+  pred_daily2s$min_rh[i]=get_nxt_chain(pred_daily2s$min_rh[i-1],
+                                     min_rh_nxt_m[[season[i]]])
+  
+  pred_daily2s$max_rh[i]=get_nxt_chain(pred_daily2s$max_rh[i-1],
+                                     max_rh_nxt_m[[season[i]]])
+  pred_daily2s$avg_rh[i]=get_nxt_chain(pred_daily2s$avg_rh[i-1],
+                                     avg_rh_nxt_m[[season[i]]])
+  
+  
+}
+in2s=predict(precip2_gbt4s,data.matrix(pred_daily2s[,-5]))
+bin2s=predict(b2s,data.matrix(pred_daily2s[,-5]))
+sqrt(mean((in2s-daily$precip_in)^2))
+
+table(bin2s >.5,daily$precip_in>0.05)
 
