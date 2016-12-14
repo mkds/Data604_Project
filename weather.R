@@ -5,53 +5,65 @@ str(daily_summary)
 #Convert day into date format
 daily_summary$day=as.Date(daily_summary$day,"%Y-%m-%d")
 str(daily_summary)
-
-#Try linear models
-precip_lm1=lm(precip_in~.,daily_summary[,3:15])
-summary(precip_lm1)
 daily_summary$month=as.factor(format(daily_summary$day,"%m"))
-precip_lm2=lm(precip_in~.,daily_summary[,3:16])
-summary(precip_lm2)
+daily_summary$year=as.numeric(format(daily_summary$day,"%Y"))
+daily_summary$daynum=as.numeric(format(daily_summary$day,"%d"))
+comp=complete.cases(daily_summary)
+daily_all=daily_summary[comp,]
+summary(daily_all)
+daily_tp=daily_all[,c("precip_in","max_temp_f","min_temp_f","climo_high_f",
+                          "climo_low_f","climo_precip_in","month")]
 
-##########Try gradient boosting#########
-## Try a regerssion model to predict inches then try
-###   Logistic model to predict if it will rain or not ##
+daily_tph=daily_all[,c("precip_in","max_temp_f","min_temp_f","climo_high_f",
+                      "climo_low_f","climo_precip_in","month","min_rh",
+                      "max_rh","avg_rh")]
+
+daily_tphd=daily_all[,c("precip_in","max_temp_f","min_temp_f","climo_high_f",
+                       "climo_low_f","climo_precip_in","month","min_rh",
+                       "max_rh","avg_rh","max_dewpoint_f","min_dewpoint_f")]
+
+############### Models ############
 
 library(xgboost)
+x1tp=xgboost(data = data.matrix(daily_tp[,-1]),
+             label = data.matrix(daily_tp$precip_in), 
+             max.depth = 2, eta = 1, nround = 50,
+             nthread = 2, objective = "reg:linear")
 
-comp=complete.cases(daily_summary)
-precip_gbt1 <- xgboost(data = data.matrix(daily_summary[comp,c(3:6,8:16)]),
-                      label = data.matrix(daily_summary$precip_in[comp]), 
-                      max.depth = 5, eta = 1, nround = 50,
-          nthread = 2, objective = "reg:linear")
+x1tph=xgboost(data = data.matrix(daily_tph[,-1]),
+             label = data.matrix(daily_tph$precip_in), 
+             max.depth = 2, eta = 1, nround = 50,
+             nthread = 2, objective = "reg:linear")
 
+xbtph1=xgboost(data = data.matrix(daily_tph[,-1]),
+              label = data.matrix(daily_tph$precip_in>0.01), 
+              max.depth = 2, eta = 1, nround = 50,
+              nthread = 2, objective = "binary:logistic")
 
-xgb.importance(model=precip_gbt,feature_names = colnames(daily_summary[comp,c(3:6,8:16)]))
+xbtph5=xgboost(data = data.matrix(daily_tph[,-1]),
+               label = data.matrix(daily_tph$precip_in>0.05), 
+               max.depth = 2, eta = 1, nround = 50,
+               nthread = 2, objective = "binary:logistic")
 
-daily_summary$year=as.numeric(format(daily_summary$day,"%Y"))
-precip_gbt2 <- xgboost(data = data.matrix(daily_summary[comp,c(3:6,8:17)]),
-                      label = data.matrix(daily_summary$precip_in[comp]), 
-                      max.depth = 5, eta = 1, nround = 50,
-                      nthread = 2, objective = "reg:linear")
+xbtpah5=xgboost(data = data.matrix(daily_tph[,c(-1,-8,-9)]),
+        label = data.matrix(daily_tph$precip_in>0.05), 
+        max.depth = 2, eta = 1, nround = 50,
+        nthread = 2, objective = "binary:logistic")
+xbtphd5=xgboost(data = data.matrix(daily_tphd[,-1]),
+                label = data.matrix(daily_tph$precip_in>0.05), 
+                max.depth = 2, eta = 1, nround = 50,
+                nthread = 2, objective = "binary:logistic")
 
+#============
+max_temp_nxt=get_trans_mat(daily_all$max_temp_f,40)
+min_temp_nxt=get_trans_mat(daily_all$min_temp_f,40)
+max_dew_nxt=get_trans_mat(daily_all$max_dewpoint_f,40)
+min_dew_nxt=get_trans_mat(daily_all$min_dewpoint_f,40)
+avg_rh_nxt=get_trans_mat(daily_all$avg_rh,40)
+min_rh_nxt=get_trans_mat(daily_all$min_rh,40)
+max_rh_nxt=get_trans_mat(daily_all$max_rh,40)
 
-xgb.importance(model=precip_gbt2,feature_names = colnames(daily_summary[comp,c(3:6,8:17)]))
-
-
-### Let's use temp., dewpoint and relative humidity for the simulation
-daily=daily_summary[,c(3:7,10:17)]
-str(daily)
-comp_cases=complete.cases(daily)
-daily=daily[comp_cases,]
-
-precip_gbt3 <- xgboost(data = data.matrix(daily[,-5]),
-                      label = data.matrix(daily$precip_in), 
-                      max.depth = 5, eta = 1, nround = 50,
-                      nthread = 5, objective = "reg:linear")
-
-xgb.importance(model=precip_gbt3,feature_names = colnames(daily[,-5]))
-
-cor(daily$max_temp_f[4:3503],daily$max_temp_f[1:3500],use = "pair")
+#===============
 
 ##Function to build transition matrix on numeric values
 get_trans_mat=function(x,n){
@@ -83,357 +95,81 @@ get_nxt_chain=function(cur_val,mat){
   vals=as.numeric(rownames(mat))
   cur_row=which.min(abs(vals-cur_val))
   nxt_indx=which.max(mat[cur_row,])
-  return(vals[nxt_indx])
-  #return(sum(vals*mat[cur_row,]))
-  
-}
-  
-######Check forecast only using precipetation#####
-precip_nxt=get_trans_mat(daily$precip_in,40)
-
-precip_forecast=NULL
-for(i in 1:nrow(daily)){
-  precip_forecast[i]=get_nxt_chain(daily$precip_in[i-1],precip_nxt)
+  #return(vals[nxt_indx])
+  return(sum(vals*mat[cur_row,]))
   
 }
 
-table(precip_forecast[-nrow(daily)]>0.05,daily$precip_in[-1]>0.05)
 
-### Using transition matrix for precipitation results in very poor simulation
-
-
-###Let's  try to simulate parameters and check
-max_temp_nxt=get_trans_mat(daily$max_temp_f,40)
-min_temp_nxt=get_trans_mat(daily$min_temp_f,40)
-max_dew_nxt=get_trans_mat(daily$max_dewpoint_f,40)
-min_dew_nxt=get_trans_mat(daily$min_dewpoint_f,40)
-avg_rh_nxt=get_trans_mat(daily$avg_rh,40)
-min_rh_nxt=get_trans_mat(daily$min_rh,40)
-max_rh_nxt=get_trans_mat(daily$max_rh,40)
-
-daily1=daily
-#### Using transition matrix simulate parameter value for next day
-for (i in 1:nrow(daily1)){
-  daily1$max_temp_f[i]=get_band(daily1$max_temp_f[i],
-                                         max_temp_nxt)
-  
-  daily1$min_temp_f[i]=get_band(daily1$min_temp_f[i],
-                                         min_temp_nxt)
-  daily1$max_dewpoint_f[i]=get_band(daily1$max_dewpoint_f[i],
-                                             max_dew_nxt)
-  daily1$min_dewpoint_f[i]=get_band(daily1$min_dewpoint_f[i],
-                                             min_dew_nxt)
-  
-  daily1$min_rh[i]=get_band(daily1$min_rh[i],
-                                     min_rh_nxt)
-  
-  daily1$max_rh[i]=get_band(daily1$max_rh[i],
-                                     max_rh_nxt)
-  daily1$avg_rh[i]=get_band(daily1$avg_rh[i],
-                                     avg_rh_nxt)
-  
-  
-}
-
-b=xgboost(data = data.matrix(daily1[,-5]),
-          label = data.matrix(daily1$precip_in>0.05),
-          max.depth = 1, eta = 1, nround = 50,
-          nthread = 5, objective = "binary:logistic")
-
-
-
-precip_gbt4 <- xgboost(data = data.matrix(daily1[,-5]),
-                       label = data.matrix(daily1$precip_in), 
-                       max.depth = 1, eta = 1, nround = 50,
-                       nthread = 5, objective = "reg:linear")
-
-pred_daily=daily1
-for (i in nrow(pred_daily):2){
-  pred_daily$max_temp_f[i]=get_nxt_chain(pred_daily$max_temp_f[i-1],
-                                         max_temp_nxt)
-  
-  pred_daily$min_temp_f[i]=get_nxt_chain(pred_daily$min_temp_f[i-1],
-                                         min_temp_nxt)
-  pred_daily$max_dewpoint_f[i]=get_nxt_chain(pred_daily$max_dewpoint_f[i-1],
-                                         max_dew_nxt)
-  pred_daily$min_dewpoint_f[i]=get_nxt_chain(pred_daily$min_dewpoint_f[i-1],
-                                         min_dew_nxt)
-  
-  pred_daily$min_rh[i]=get_nxt_chain(pred_daily$min_rh[i-1],
-                                             min_rh_nxt)
-  
-  pred_daily$max_rh[i]=get_nxt_chain(pred_daily$max_rh[i-1],
-                                     max_rh_nxt)
-  pred_daily$avg_rh[i]=get_nxt_chain(pred_daily$avg_rh[i-1],
-                                     avg_rh_nxt)
-  
-    
-}
-in1=predict(precip_gbt4,data.matrix(pred_daily[,-5]))
-bin=predict(b,data.matrix(pred_daily[,-5]))
-sqrt(mean((in1-daily$precip_in)^2))
-
-table(bin>.5,daily$precip_in>0.05)
-
-
-
-
-##### Check if using transitions by month helps #####
-min_temp_nxt_m=NULL
-max_temp_nxt_m=NULL
-max_dew_nxt_m=NULL
-min_dew_nxt_m=NULL
-avg_rh_nxt_m=NULL
-min_rh_nxt_m=NULL
-max_rh_nxt_m=NULL
-month=as.numeric(as.character(daily$month))
-for(i in 1:12){
-  max_temp_nxt_m[[i]]=get_trans_mat(daily$max_temp_f[month==i],40)
-  min_temp_nxt_m[[i]]=get_trans_mat(daily$min_temp_f[month==i],40)
-  max_dew_nxt_m[[i]]=get_trans_mat(daily$max_dewpoint_f[month==i],40)
-  min_dew_nxt_m[[i]]=get_trans_mat(daily$min_dewpoint_f[month==i],40)
-  avg_rh_nxt_m[[i]]=get_trans_mat(daily$avg_rh[month==i],40)
-  min_rh_nxt_m[[i]]=get_trans_mat(daily$min_rh[month==i],40)
-  max_rh_nxt_m[[i]]=get_trans_mat(daily$max_rh[month==i],40)
-
-
-}
-
-
-
-daily2=daily
-for (i in 1:nrow(daily1)){
-  daily1$max_temp_f[i]=get_band(daily1$max_temp_f[i],
-                                max_temp_nxt_m[[month[i]]])
-  
-  daily1$min_temp_f[i]=get_band(daily1$min_temp_f[i],
-                                min_temp_nxt_m[[month[i]]])
-  daily1$max_dewpoint_f[i]=get_band(daily1$max_dewpoint_f[i],
-                                    max_dew_nxt_m[[month[i]]])
-  daily1$min_dewpoint_f[i]=get_band(daily1$min_dewpoint_f[i],
-                                    min_dew_nxt_m[[month[i]]])
-  
-  daily1$min_rh[i]=get_band(daily1$min_rh[i],
-                            min_rh_nxt_m[[month[i]]])
-  
-  daily1$max_rh[i]=get_band(daily1$max_rh[i],
-                            max_rh_nxt_m[[month[i]]])
-  daily1$avg_rh[i]=get_band(daily1$avg_rh[i],
-                            avg_rh_nxt_m[[month[i]]])
-  
-  
-}
-
-b2=xgboost(data = data.matrix(daily2[,-5]),
-          label = data.matrix(daily2$precip_in>0.05),
-          max.depth = 1, eta = 1, nround = 50,
-          nthread = 5, objective = "binary:logistic")
-
-
-
-precip2_gbt4 <- xgboost(data = data.matrix(daily2[,-5]),
-                       label = data.matrix(daily2$precip_in), 
-                       max.depth = 1, eta = 1, nround = 50,
-                       nthread = 5, objective = "reg:linear")
-
-pred_daily2=daily2
-for (i in nrow(daily2):2){
-  pred_daily2$max_temp_f[i]=get_nxt_chain(pred_daily2$max_temp_f[i-1],
-                                         max_temp_nxt_m[[month[i]]])
-  
-  pred_daily2$min_temp_f[i]=get_nxt_chain(pred_daily2$min_temp_f[i-1],
-                                         min_temp_nxt_m[[month[i]]])
-  pred_daily2$max_dewpoint_f[i]=get_nxt_chain(pred_daily2$max_dewpoint_f[i-1],
-                                             max_dew_nxt_m[[month[i]]])
-  pred_daily2$min_dewpoint_f[i]=get_nxt_chain(pred_daily2$min_dewpoint_f[i-1],
-                                             min_dew_nxt_m[[month[i]]])
-  
-  pred_daily2$min_rh[i]=get_nxt_chain(pred_daily2$min_rh[i-1],
-                                     min_rh_nxt_m[[month[i]]])
-  
-  pred_daily2$max_rh[i]=get_nxt_chain(pred_daily2$max_rh[i-1],
-                                     max_rh_nxt_m[[month[i]]])
-  pred_daily2$avg_rh[i]=get_nxt_chain(pred_daily2$avg_rh[i-1],
-                                     avg_rh_nxt_m[[month[i]]])
-  
-  
-}
-in2=predict(precip2_gbt4,data.matrix(pred_daily2[,-5]))
-bin2=predict(b2,data.matrix(pred_daily2[,-5]))
-sqrt(mean((in2-daily$precip_in)^2))
-
-table(bin2>.5,daily$precip_in>0.05)
-#### Looks like transition matrix  by month is not good
-
-#### To do - Three day forecast
-#### To do - try transition matrix by season
-
-
-
-##### Three day forecast
-pred_daily3=daily2
-for (i in nrow(pred_daily3):4){
-  max_temp=daily2$max_temp_f[i-3]
-  min_temp=daily2$min_temp_f[i-3]
-  max_dewpoint=daily2$max_dewpoint_f[i-3]
-  min_dewpoint=daily2$min_dewpoint_f[i-3]
-  max_rh=daily2$max_rh[i-3]
-  min_rh=daily2$min_rh[i-3]
-  avg_rh=daily2$avg_rh[i-3]
-  for (j in 3:1){
-    max_temp=get_nxt_chain(max_temp, max_temp_nxt)
-    
-    min_temp=get_nxt_chain(min_temp, min_temp_nxt)
-    max_dewpoint=get_nxt_chain(max_dewpoint, max_dew_nxt)
-    min_dewpoint=get_nxt_chain(min_dewpoint, min_dew_nxt)
-    min_rh=get_nxt_chain(min_rh, min_rh_nxt)
-    max_rh=get_nxt_chain(max_rh, max_rh_nxt)
-    avg_rh=get_nxt_chain(avg_rh, avg_rh_nxt)
+mc_sim=function(cur_val,mat,n){
+  vals=as.numeric(rownames(mat))
+  cur_state=which.min(abs(vals-cur_val))
+  state=matrix(0,ncol=ncol(mat))
+  state[cur_state]=1
+  #nxt_indx=which.max(mat[cur_state,])
+  #return(vals[nxt_indx])
+  value=NULL
+  for (i in 1:n){
+    state=state%*%mat
+    value[i]=sum(vals*state)
   }
-    
+  #return(value)
+  return(sum(vals*state))
   
-  pred_daily3$max_temp_f[i]=max_temp
-  pred_daily3$min_temp_f[i]=min_temp
-  pred_daily3$max_dewpoint_f[i]=max_dewpoint
-  pred_daily3$min_dewpoint_f[i]=min_dewpoint
-  pred_daily3$min_rh[i]=min_rh
-  pred_daily3$max_rh[i]=max_rh
-  pred_daily3$avg_rh[i]=avg_rh
-
 }
 
-in3=predict(precip2_gbt4,data.matrix(pred_daily3[,-5]))
-bin3=predict(b2,data.matrix(pred_daily3[,-5]))
-sqrt(mean((in3-daily$precip_in)^2))
-
-table(bin3>.5,daily$precip_in>0.05)
+#=====
 
 
-
-#### 5th Day Forecast
-
-pred_daily5=daily2
-for (i in nrow(pred_daily3):6){
-  max_temp=daily2$max_temp_f[i-5]
-  min_temp=daily2$min_temp_f[i-5]
-  max_dewpoint=daily2$max_dewpoint_f[i-5]
-  min_dewpoint=daily2$min_dewpoint_f[i-5]
-  max_rh=daily2$max_rh[i-5]
-  min_rh=daily2$min_rh[i-5]
-  avg_rh=daily2$avg_rh[i-5]
-  for (j in 5:1){
-    max_temp=get_nxt_chain(max_temp, max_temp_nxt)
+forecast_ser=function(num_days=1,bins=30){
+  max_temp_nxt=get_trans_mat(daily_tph$max_temp_f,n=bins)
+  min_temp_nxt=get_trans_mat(daily_tph$min_temp_f,n=bins)
+  #max_dew_nxt=get_trans_mat(daily_tph$max_dewpoint_f,n=bins)
+  #min_dew_nxt=get_trans_mat(daily_tph$min_dewpoint_f,n=bins)
+  avg_rh_nxt=get_trans_mat(daily_tph$avg_rh,n=bins)
+  min_rh_nxt=get_trans_mat(daily_tph$min_rh,n=bins)
+  max_rh_nxt=get_trans_mat(daily_tph$max_rh,n=bins)
+  
+  sim_predictors=daily_tph
+  
+  for (i in nrow(sim_predictors):(num_days+1)){
+    max_temp=mc_sim(daily_tph$max_temp_f[i-num_days],max_temp_nxt,num_days)
+    min_temp=mc_sim(daily_tph$min_temp_f[i-num_days],min_temp_nxt,num_days)
+    #max_dewpoint=mc(daily2$max_dewpoint_f[i-num_days]
+    #min_dewpoint=mc(daily2$min_dewpoint_f[i- num_days]
+    max_rh=mc_sim(daily_tph$max_rh[i-num_days],max_rh_nxt,num_days)
+    min_rh=mc_sim(daily_tph$min_rh[i-num_days],min_rh_nxt,num_days)
+    avg_rh=mc_sim(daily_tph$avg_rh[i-num_days],avg_rh_nxt,num_days)
     
-    min_temp=get_nxt_chain(min_temp, min_temp_nxt)
-    max_dewpoint=get_nxt_chain(max_dewpoint, max_dew_nxt)
-    min_dewpoint=get_nxt_chain(min_dewpoint, min_dew_nxt)
-    min_rh=get_nxt_chain(min_rh, min_rh_nxt)
-    max_rh=get_nxt_chain(max_rh, max_rh_nxt)
-    avg_rh=get_nxt_chain(avg_rh, avg_rh_nxt)
+    
+    sim_predictors$max_temp_f[i]=max_temp
+    sim_predictors$min_temp_f[i]=min_temp
+    #sim_predictors$max_dewpoint_f[i]=max_dewpoint
+    #sim_predictors$min_dewpoint_f[i]=min_dewpoint
+    sim_predictors$min_rh[i]=min_rh
+    sim_predictors$max_rh[i]=max_rh
+    sim_predictors$avg_rh[i]=avg_rh
+    
   }
-    
   
-  pred_daily5$max_temp_f[i]=max_temp
-  pred_daily5$min_temp_f[i]=min_temp
-  pred_daily5$max_dewpoint_f[i]=max_dewpoint
-  pred_daily5$min_dewpoint_f[i]=min_dewpoint
-  pred_daily5$min_rh[i]=min_rh
-  pred_daily5$max_rh[i]=max_rh
-  pred_daily5$avg_rh[i]=avg_rh
-
-}
-
-in5=predict(precip2_gbt4,data.matrix(pred_daily5[,-5]))
-bin5=predict(b2,data.matrix(pred_daily5[,-5]))
-sqrt(mean((in5-daily$precip_in)^2))
-
-table(bin5>.5,daily$precip_in>0.05)
-
-
-###By Seasons
-##### Check if using transitions by month helps #####
-min_temp_nxt_s=NULL
-max_temp_nxt_s=NULL
-max_dew_nxt_s=NULL
-min_dew_nxt_s=NULL
-avg_rh_nxt_s=NULL
-min_rh_nxt_s=NULL
-max_rh_nxt_s=NULL
-season=(as.numeric(as.character(daily$month)) %/% 3 %%4) + 1
-for(i in 1:4){
-  max_temp_nxt_s[[i]]=get_trans_mat(daily$max_temp_f[season==i],40)
-  min_temp_nxt_s[[i]]=get_trans_mat(daily$min_temp_f[season==i],40)
-  max_dew_nxt_s[[i]]=get_trans_mat(daily$max_dewpoint_f[season==i],40)
-  min_dew_nxt_s[[i]]=get_trans_mat(daily$min_dewpoint_f[season==i],40)
-  avg_rh_nxt_s[[i]]=get_trans_mat(daily$avg_rh[season==i],40)
-  min_rh_nxt_s[[i]]=get_trans_mat(daily$min_rh[season==i],40)
-  max_rh_nxt_s[[i]]=get_trans_mat(daily$max_rh[season==i],40)
-
-
-}
-
-
-
-daily2s=daily2
-for (i in 1:nrow(daily2s)){
-  daily2s$max_temp_f[i]=get_band(daily2s$max_temp_f[i],
-                                max_temp_nxt_m[[season[i]]])
   
-  daily2s$min_temp_f[i]=get_band(daily2s$min_temp_f[i],
-                                min_temp_nxt_m[[season[i]]])
-  daily2s$max_dewpoint_f[i]=get_band(daily2s$max_dewpoint_f[i],
-                                    max_dew_nxt_m[[season[i]]])
-  daily2s$min_dewpoint_f[i]=get_band(daily2s$min_dewpoint_f[i],
-                                    min_dew_nxt_m[[season[i]]])
-  
-  daily2s$min_rh[i]=get_band(daily2s$min_rh[i],
-                            min_rh_nxt_m[[season[i]]])
-  
-  daily2s$max_rh[i]=get_band(daily2s$max_rh[i],
-                            max_rh_nxt_m[[season[i]]])
-  daily2s$avg_rh[i]=get_band(daily2s$avg_rh[i],
-                            avg_rh_nxt_m[[season[i]]])
-  
+  in1=predict(x1tph,data.matrix(sim_predictors[,-1]))
+  #bi1_1=predict(xbtph1,data.matrix(sim_predictors[,-1]))
+  #bi1_5=predict(xbtph5,data.matrix(sim_predictors[,-1]))
+  print(sqrt(mean((in1-daily_tph$precip_in)^2)))
+  #month_nxt_day=month_rmse(daily_all$precip_in,in1,month=daily_all$month,year=daily_all$year)
+  print(table(in1>0.01,daily_tph$precip_in>0.01))
+  #print(table(bi1_1>.5,daily_all$precip_in>0.01))
+  #print(table(bi1_5>.5,daily_all$precip_in>0.05))
+  Overall=sum((in1>.05) == (daily_tph$precip_in>0.05))/nrow(daily_tph)
+  RainyDays=sum((in1>.05) & (daily_tph$precip_in>0.05))/sum(daily_tph$precip_in>0.05)
+  cat("OVerall",Overall)
+  cat("\nRain",RainyDays)
+  sim_predictors$pred_percip=in1
+  return(sim_predictors)
   
 }
-
-b2s=xgboost(data = data.matrix(daily2s[,-5]),
-          label = data.matrix(daily2s$precip_in>0.05),
-          max.depth = 1, eta = 1, nround = 50,
-          nthread = 5, objective = "binary:logistic")
-
-
-
-precip2_gbt4s <- xgboost(data = data.matrix(daily2s[,-5]),
-                       label = data.matrix(daily2s$precip_in), 
-                       max.depth = 1, eta = 1, nround = 50,
-                       nthread = 5, objective = "reg:linear")
-
-pred_daily2s=daily2
-for (i in nrow(daily2):2){
-  pred_daily2s$max_temp_f[i]=get_nxt_chain(pred_daily2s$max_temp_f[i-1],
-                                         max_temp_nxt_m[[season[i]]])
-  
-  pred_daily2s$min_temp_f[i]=get_nxt_chain(pred_daily2s$min_temp_f[i-1],
-                                         min_temp_nxt_m[[season[i]]])
-  pred_daily2s$max_dewpoint_f[i]=get_nxt_chain(pred_daily2s$max_dewpoint_f[i-1],
-                                             max_dew_nxt_m[[season[i]]])
-  pred_daily2s$min_dewpoint_f[i]=get_nxt_chain(pred_daily2s$min_dewpoint_f[i-1],
-                                             min_dew_nxt_m[[season[i]]])
-  
-  pred_daily2s$min_rh[i]=get_nxt_chain(pred_daily2s$min_rh[i-1],
-                                     min_rh_nxt_m[[season[i]]])
-  
-  pred_daily2s$max_rh[i]=get_nxt_chain(pred_daily2s$max_rh[i-1],
-                                     max_rh_nxt_m[[season[i]]])
-  pred_daily2s$avg_rh[i]=get_nxt_chain(pred_daily2s$avg_rh[i-1],
-                                     avg_rh_nxt_m[[season[i]]])
-  
-  
-}
-in2s=predict(precip2_gbt4s,data.matrix(pred_daily2s[,-5]))
-bin2s=predict(b2s,data.matrix(pred_daily2s[,-5]))
-sqrt(mean((in2s-daily$precip_in)^2))
-
-table(bin2s >.5,daily$precip_in>0.05)
-
+acc_1d=forecast_ser(1,10)
+acc_3d=forecast_ser(3,10)
+acc_5d=forecast_ser(5,10)
+acc_20d=forecast_ser(20,10)
