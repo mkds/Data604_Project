@@ -25,43 +25,25 @@ daily_tphd=daily_all[,c("precip_in","max_temp_f","min_temp_f","climo_high_f",
 ############### Models ############
 
 library(xgboost)
-x1tp=xgboost(data = data.matrix(daily_tp[,-1]),
-             label = data.matrix(daily_tp$precip_in), 
-             max.depth = 2, eta = 1, nround = 50,
-             nthread = 2, objective = "reg:linear")
+
+
+#Train with upto 2015 and do prediction for 2016 see how the model performs
+year=daily_all$year
+x=xgboost(data = data.matrix(daily_tph[year!=2016,-1]),
+          label = data.matrix(daily_tph$precip_in[year!=2016]), 
+          max.depth = 2, eta = 1, nround = 50,
+          nthread = 2, objective = "reg:linear")
+pr=predict(x,data.matrix(daily_tph[year==2016,-1]))
+table(pr>0.05,daily_tph$precip_in[year==2016]>0.05)
+
+#Now train with all data so that we could use this for simulation
 
 x1tph=xgboost(data = data.matrix(daily_tph[,-1]),
              label = data.matrix(daily_tph$precip_in), 
              max.depth = 2, eta = 1, nround = 50,
              nthread = 2, objective = "reg:linear")
 
-xbtph1=xgboost(data = data.matrix(daily_tph[,-1]),
-              label = data.matrix(daily_tph$precip_in>0.01), 
-              max.depth = 2, eta = 1, nround = 50,
-              nthread = 2, objective = "binary:logistic")
 
-xbtph5=xgboost(data = data.matrix(daily_tph[,-1]),
-               label = data.matrix(daily_tph$precip_in>0.05), 
-               max.depth = 2, eta = 1, nround = 50,
-               nthread = 2, objective = "binary:logistic")
-
-xbtpah5=xgboost(data = data.matrix(daily_tph[,c(-1,-8,-9)]),
-        label = data.matrix(daily_tph$precip_in>0.05), 
-        max.depth = 2, eta = 1, nround = 50,
-        nthread = 2, objective = "binary:logistic")
-xbtphd5=xgboost(data = data.matrix(daily_tphd[,-1]),
-                label = data.matrix(daily_tph$precip_in>0.05), 
-                max.depth = 2, eta = 1, nround = 50,
-                nthread = 2, objective = "binary:logistic")
-
-#============
-max_temp_nxt=get_trans_mat(daily_all$max_temp_f,40)
-min_temp_nxt=get_trans_mat(daily_all$min_temp_f,40)
-max_dew_nxt=get_trans_mat(daily_all$max_dewpoint_f,40)
-min_dew_nxt=get_trans_mat(daily_all$min_dewpoint_f,40)
-avg_rh_nxt=get_trans_mat(daily_all$avg_rh,40)
-min_rh_nxt=get_trans_mat(daily_all$min_rh,40)
-max_rh_nxt=get_trans_mat(daily_all$max_rh,40)
 
 #===============
 
@@ -74,6 +56,9 @@ get_trans_mat=function(x,n){
   x_bin=round(round(x/div_factor)*div_factor,3)
   mat=table(x_bin[-1],x_bin[-l])
   n=nrow(mat)
+  c=ncol(mat)
+  if (n > c) mat=mat[1:(n-1),]
+  if (c > n) mat=mat[,1:(c-1)]
   for (i in 1:n){
     mat[i,]=round(mat[i,]/sum(mat[i,]),4)
   }
@@ -169,7 +154,246 @@ forecast_ser=function(num_days=1,bins=30){
   return(sim_predictors)
   
 }
-acc_1d=forecast_ser(1,10)
-acc_3d=forecast_ser(3,10)
-acc_5d=forecast_ser(5,10)
-acc_20d=forecast_ser(20,10)
+
+#Tried various values for number of states and state 10 looked better
+sim_1d=forecast_ser(1,10)
+sim_3d=forecast_ser(3,10)
+sim_5d=forecast_ser(5,10)
+sim_20d=forecast_ser(20,10)
+
+#Detect temprature season using Gibbs sampling
+daily_all$week=as.numeric(format(daily_all$day,"%W"))
+
+
+gibbs_season=function(n){
+  #Inital Values for breakpoints
+  t1 = sample(1:180,1)
+  t2 = sample((t1+5):250,1)
+  t3 = sample((t2+5):275,1)
+  t4 = sample((t3+5):295,1)
+  
+  season_change=data.frame(t1,t2,t3,t4)
+  
+  #Gibbs Sampling
+  for (j in 1:n){
+    #Values by break up
+    y1 = gety(t1:(t2-1))
+    y2 = gety(t2:(t3-1))
+    y3 = gety(t3:(t4-1))
+    y4 = gety(c(t4:295,1:(t1-1)))
+    
+    #Mean value for each season
+    m1 = mean(y1)
+    m2 = mean(y2)
+    m3 = mean(y3)
+    m4 = mean(y4)
+    
+    s1 = sd(y1)
+    s2 = sd(y2)
+    s3 = sd(y3)
+    s4 = sd(y4)
+    
+    if (is.na(s1)) s1 = 0.01
+    if (is.na(s2)) s2 = 0.01
+    if (is.na(s3)) s3 = 0.01
+    if (is.na(s4)) s4 = 0.01
+    
+    mu1 = rnorm(1,m1,s1/length(y1))
+    mu2 = rnorm(1,m2,s2/length(y2))
+    mu3 = rnorm(1,m3,s3/length(y3))
+    mu4 = rnorm(1,m4,s4/length(y4))
+    
+    if (length(y1) > 1){
+      si1 = rchisq(1,length(y1)-1) * s1 / (length(y1)-1) 
+    } else {
+      si1 = 0.01 
+    }
+    
+    if (length(y2) > 1){
+      si2 = rchisq(1,length(y2)-1) * s2 / (length(y2)-1) 
+    } else {
+      si2 = 0.01 
+    }
+    
+    if (length(y3) > 1){
+      si3 = rchisq(1,length(y3)-1) * s3 / (length(y3)-1) 
+    } else {
+      si3 = 0.01 
+    }
+    
+    if (length(y4) > 1){
+      si4 = rchisq(1,length(y4)-1) * s4 / (length(y4)-1) 
+    } else {
+      si4 = 0.01 
+    }
+    
+    
+    pt1 = numeric(180)
+    pt2 = numeric(250)
+    pt3 = numeric(275)
+    pt4 = numeric(295)
+    
+    
+    for (i in 1:min(t2-1,180)){
+      group1 = gety(i:(t2-1))
+      group2 = gety(c(t4:295,1:(i-1)))
+      
+      pt1[i] = conditional(group1,mu1,si1) * conditional(group2,mu4,si4)
+      
+    }
+    
+    
+    for (i in (t1+1):min(t3-1,250)){
+      group1 = gety((t1+1):i)
+      group2 = gety((i+1):(t3-1))
+      
+      pt2[i] = conditional(group1,mu1,si1) * conditional(group2,mu2,si2)
+      
+    }
+    
+    for (i in (t2+1):min(t4-1,275)){
+      group1 = gety((t2+1):i)
+      group2 = gety((i+1):(t4-1))
+      
+      pt3[i] = conditional(group1,mu2,si2) * conditional(group2,mu3,si3)
+      
+    }
+    
+    for (i in (t3+1):295){
+      group1 = gety((t3+1):i)
+      group2 = gety(c(i:295,1:(t1-1)))
+      
+      pt4[i] = conditional(group1,mu3,si3) * conditional(group2,mu4,si4)
+      
+    }
+    
+    if (sum(pt1) > 0) {
+      t1 = sample(1:180,1,prob=pt1) 
+    } else {
+      t1 = sample(1:180,1)
+    }
+    
+    if (sum(pt2[(t1+1):250]) > 0) {
+      t2 = sample((t1+1):250,1,prob=pt2[(t1+1):250]) 
+    } else {
+      t2 = sample((t1+1):250,1)
+    }
+    
+    if (sum(pt3[(t2+1):275]) > 0) {
+      t3 = sample((t2+1):275,1,prob=pt3[(t2+1):275]) 
+    } else { 
+      t3 = sample((t2+1):275,1)
+    }
+    if (sum(pt4[(t3+1):295]) > 0) {
+      t4 = sample((t3+1):295,1,prob=pt4[(t3+1):295]) 
+    } else {
+      t4 = sample((t3+1):295,1)
+    }
+    
+    season_change=rbind(season_change,c(t1,t2,t3,t4))
+    
+    if ( (j %% 50 ) == 0) print(j)
+    
+  }
+  return(season_change)  
+  
+}
+
+
+#Conditional probability
+conditional=function(y,m,s){
+  my = mean(y)
+  ly = length(y)
+  if (ly > 1) sy = sd(y) else sy=0.01
+  p = prod(dnorm(y,m,s))*                        #Likelyhood of data given mean, sd
+    dnorm(m,my,sy/sqrt(ly)) *             #Probability of mean
+    dchisq((s/sy)^2*ly,ly)               #Probability of sd
+  
+  return(p)
+}
+
+gety=function(i) return(y[i])
+
+
+weekly = daily_all[daily_all$year>2010,] %>% group_by(week,year) %>% 
+  summarise(wtemp=mean(max_temp_f))
+weekly=as.data.frame(weekly)
+y=weekly$wtemp
+
+bp_temp=gibbs_season(5000)
+par(mfrow=c(2,2))
+hist(bp_temp$t1,main="Change Point 1")
+hist(bp_temp$t2,main="Change Point 2")
+hist(bp_temp$t3,main="Change Point 3")
+hist(bp_temp$t4,main="Change Point 4")
+
+#Expected value for change point on the time series
+mean(bp_temp$t1)
+mean(bp_temp$t2)
+mean(bp_temp$t3)
+mean(bp_temp$t4)
+
+#Week on which the changepoint occurs
+weekly$week[79]
+weekly$week[120]
+weekly$week[219]
+weekly$week[256]
+
+daily_all$season = 1
+week=daily_all$week
+daily_all$season[week >= 13 & week < 20] = 2
+daily_all$season[week >= 20 & week < 37] = 3
+daily_all$season[week >= 37 & week < 44] = 4
+daily_tph$season = daily_all$season
+
+#Try to run simulation by season
+all_tph = daily_tph
+daily_tph = all_tph[daily_all$season==1,]
+
+sim_s1_1d=forecast_ser(1,10)
+
+
+#Validate simulation
+#The p-value should be high as we expect simulated value to have same distribution 
+#      as actual value
+t.test(daily_tph$max_temp_f,sim_s1_1d$max_temp_f)
+t.test(daily_tph$max_rh,sim_s1_1d$max_rh)
+t.test(daily_tph$avg_rh,sim_s1_1d$avg_rh)
+t.test(daily_tph$min_temp_f,sim_s1_1d$min_temp_f)
+t.test(daily_tph$min_rh,sim_s1_1d$min_rh)
+
+#The high p-value 
+
+sim_s1_3d=forecast_ser(3,10)
+sim_s1_5d=forecast_ser(5,10)
+sim_s1_20d=forecast_ser(20,10)
+
+
+daily_tph = all_tph[daily_all$season==2,]
+
+sim_s2_1d=forecast_ser(1,10)
+sim_s2_3d=forecast_ser(3,10)
+sim_s2_5d=forecast_ser(5,10)
+sim_s2_20d=forecast_ser(20,10)
+
+daily_tph = all_tph[daily_all$season==3,]
+
+sim_s3_1d=forecast_ser(1,10)
+sim_s3_3d=forecast_ser(3,10)
+sim_s3_5d=forecast_ser(5,10)
+sim_s3_20d=forecast_ser(20,10)
+
+daily_tph = all_tph[daily_all$season==4,]
+
+sim_s4_1d=forecast_ser(1,10)
+sim_s4_3d=forecast_ser(3,10)
+sim_s4_5d=forecast_ser(5,10)
+sim_s4_20d=forecast_ser(20,10)
+
+#=============== Simulation using fullset rather than by season seems to be better
+daily_tph = all_tph
+sim_1d=forecast_ser(1,10)
+sim_3d=forecast_ser(3,10)
+sim_5d=forecast_ser(5,10)
+sim_20d=forecast_ser(20,10)
+
